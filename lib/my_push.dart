@@ -153,7 +153,7 @@ class MyPush {
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const ios = DarwinInitializationSettings();
     await _local.initialize(
-      const InitializationSettings(android: android, iOS: ios),
+      settings: const InitializationSettings(android: android, iOS: ios),
       onDidReceiveNotificationResponse: (resp) {
         final payload = resp.payload;
         if (payload != null && payload.isNotEmpty) {
@@ -222,10 +222,10 @@ class MyPush {
 
     final n = m.notification;
     await _local.show(
-      DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      n?.title ?? data['title']?.toString(),
-      n?.body ?? data['body']?.toString(),
-      const NotificationDetails(
+      id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      title: n?.title ?? data['title']?.toString(),
+      body: n?.body ?? data['body']?.toString(),
+      notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           _androidChannelId,
           'Notifications',
