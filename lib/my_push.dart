@@ -1,11 +1,15 @@
 library my_push;
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
+import 'dart:ui' show Color;
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/api_client.dart';
@@ -15,19 +19,23 @@ export 'src/api_client.dart' show ApiClient;
 typedef NotificationClickHandler = void Function(Map<String, dynamic> data);
 typedef ForegroundWillDisplay = bool Function(Map<String, dynamic> data);
 
+const String _kChannelId = 'my_push_default';
+const String _kChannelName = 'Notifications';
+
 /// Self-hosted push SDK — a simple OneSignal-like facade.
 ///
 /// ```dart
 /// await MyPush.instance.initialize(appKey: 'pub_...', apiBaseUrl: 'https://...');
 /// await MyPush.instance.requestPermission();
-/// MyPush.instance.onNotificationClick((data) { /* navigate */ });
+/// MyPush.instance.onNotificationClick((data) {
+///   // data['action_id'] is set when an action button was tapped.
+/// });
 /// ```
 class MyPush {
   MyPush._();
   static final MyPush instance = MyPush._();
 
   static const _deviceIdKey = 'my_push_device_id';
-  static const _androidChannelId = 'my_push_default';
 
   late ApiClient _api;
   String? _deviceId;
@@ -43,17 +51,14 @@ class MyPush {
 
   /// Initialize: register the device and wire listeners.
   ///
-  /// By default the SDK fetches the Firebase client config from the backend and
-  /// calls `Firebase.initializeApp()` for you — so the app needs no
-  /// `flutterfire configure` or `google-services.json` / `GoogleService-Info.plist`.
-  /// Just set the config once in the dashboard.
-  ///
-  /// If you already call `Firebase.initializeApp()` yourself, pass
-  /// [autoInitializeFirebase] = false.
+  /// [iosCategories] lets the host app pre-register iOS notification categories
+  /// so action buttons work on iOS (iOS requires categories at init time). See
+  /// the README for the recommended setup and the Notification Service Extension.
   Future<void> initialize({
     required String appKey,
     required String apiBaseUrl,
     bool autoInitializeFirebase = true,
+    List<DarwinNotificationCategory>? iosCategories,
   }) async {
     if (_initialized) return;
     _api = ApiClient(baseUrl: apiBaseUrl, appKey: appKey);
@@ -63,9 +68,10 @@ class MyPush {
     }
 
     _deviceId = await _loadOrCreateDeviceId();
-    await _setupLocalNotifications();
+    await _setupLocalNotifications(iosCategories);
     await _registerDevice();
     _wireListeners();
+    await _handleLaunchFromLocalNotification();
 
     _initialized = true;
   }
@@ -113,8 +119,7 @@ class MyPush {
     await _api.setExternalUserId(_deviceId!, null);
   }
 
-  Future<void> setTag(String key, String value) =>
-      setTags({key: value});
+  Future<void> setTag(String key, String value) => setTags({key: value});
 
   Future<void> setTags(Map<String, String> tags) async {
     if (_deviceId == null) return;
@@ -127,12 +132,12 @@ class MyPush {
   }
 
   /// Register a click callback. You control app navigation yourself.
+  /// When an action button was tapped, `data['action_id']` is present.
   void onNotificationClick(NotificationClickHandler handler) {
     _onClick = handler;
   }
 
   /// Optional: decide whether to display a notification in the foreground.
-  /// Return `true` to show a system notification (default), `false` to suppress.
   void setForegroundWillDisplay(ForegroundWillDisplay gate) {
     _foregroundGate = gate;
   }
@@ -149,26 +154,27 @@ class MyPush {
     return id;
   }
 
-  Future<void> _setupLocalNotifications() async {
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const ios = DarwinInitializationSettings();
+  Future<void> _setupLocalNotifications(
+    List<DarwinNotificationCategory>? iosCategories,
+  ) async {
+    final android = const AndroidInitializationSettings('@mipmap/ic_launcher');
+    final ios = DarwinInitializationSettings(
+      notificationCategories: iosCategories ?? const [],
+    );
     await _local.initialize(
-      settings: const InitializationSettings(android: android, iOS: ios),
+      settings: InitializationSettings(android: android, iOS: ios),
       onDidReceiveNotificationResponse: (resp) {
-        final payload = resp.payload;
-        if (payload != null && payload.isNotEmpty) {
-          _handleClick(_decodeData(payload));
-        }
+        _handleResponse(resp);
       },
+      onDidReceiveBackgroundNotificationResponse: _mpBackgroundResponse,
     );
 
-    // Android channel
     await _local
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(const AndroidNotificationChannel(
-      _androidChannelId,
-      'Notifications',
+      _kChannelId,
+      _kChannelName,
       importance: Importance.high,
     ));
   }
@@ -180,9 +186,8 @@ class MyPush {
       await _api.registerDevice({
         'device_id': _deviceId,
         'push_token': token,
-        'platform': defaultTargetPlatform == TargetPlatform.iOS
-            ? 'ios'
-            : 'android',
+        'platform':
+            defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android',
       });
     } catch (e) {
       if (kDebugMode) print('[my_push] register failed: $e');
@@ -190,7 +195,6 @@ class MyPush {
   }
 
   void _wireListeners() {
-    // Token refresh → re-register
     FirebaseMessaging.instance.onTokenRefresh.listen((token) async {
       if (_deviceId == null) return;
       await _api.registerDevice({
@@ -201,18 +205,30 @@ class MyPush {
       });
     });
 
-    // Foreground message → show local notification (default)
+    // Foreground message → build a rich local notification (default).
     FirebaseMessaging.onMessage.listen(_onForegroundMessage);
 
-    // Background tap (app was opened)
+    // Background data-only messages (e.g. with action buttons) → render them.
+    FirebaseMessaging.onBackgroundMessage(_mpFirebaseBackgroundHandler);
+
+    // Body tap that opened the app (from a system-tray FCM notification).
     FirebaseMessaging.onMessageOpenedApp.listen((m) {
       _handleClick(_dataFromRemote(m));
     });
 
-    // Tap from terminated state (initial message)
+    // Tap from terminated state (FCM notification).
     FirebaseMessaging.instance.getInitialMessage().then((m) {
       if (m != null) _handleClick(_dataFromRemote(m));
     });
+  }
+
+  /// Handle the case where a *local* notification (data-only push) launched the app.
+  Future<void> _handleLaunchFromLocalNotification() async {
+    final details = await _local.getNotificationAppLaunchDetails();
+    if (details?.didNotificationLaunchApp == true) {
+      final resp = details!.notificationResponse;
+      if (resp != null) _handleResponse(resp);
+    }
   }
 
   Future<void> _onForegroundMessage(RemoteMessage m) async {
@@ -220,26 +236,25 @@ class MyPush {
     final show = _foregroundGate?.call(data) ?? true;
     if (!show) return;
 
-    final n = m.notification;
+    final details = await _buildDetails(data);
     await _local.show(
       id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      title: n?.title ?? data['title']?.toString(),
-      body: n?.body ?? data['body']?.toString(),
-      notificationDetails: const NotificationDetails(
-        android: AndroidNotificationDetails(
-          _androidChannelId,
-          'Notifications',
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-        iOS: DarwinNotificationDetails(),
-      ),
+      title: (data['title'] ?? m.notification?.title)?.toString(),
+      body: (data['body'] ?? m.notification?.body)?.toString(),
+      notificationDetails: details,
       payload: jsonEncode(data),
     );
   }
 
+  void _handleResponse(NotificationResponse resp) {
+    final data = _decodeData(resp.payload ?? '');
+    if (resp.actionId != null && resp.actionId!.isNotEmpty) {
+      data['action_id'] = resp.actionId;
+    }
+    _handleClick(data);
+  }
+
   void _handleClick(Map<String, dynamic> data) {
-    // Analytics: click report (fire-and-forget)
     final nid = data['notification_id']?.toString();
     if (nid != null && _deviceId != null) {
       _api.reportClick(nid, _deviceId!);
@@ -262,7 +277,6 @@ class MyPush {
     return {};
   }
 
-  // Minimal RFC-4122 v4 UUID (no external dep).
   String _uuidV4() {
     final rnd = _rng();
     final b = List<int>.generate(16, (_) => rnd.nextInt(256));
@@ -282,3 +296,122 @@ Random _rng() {
     return Random();
   }
 }
+
+// ── shared notification builders (used by foreground + background isolate) ──
+
+Future<Uint8List?> _download(String? url) async {
+  if (url == null || url.isEmpty) return null;
+  try {
+    final res = await http.get(Uri.parse(url));
+    if (res.statusCode == 200) return res.bodyBytes;
+  } catch (_) {}
+  return null;
+}
+
+Color? _parseColor(String? hex) {
+  if (hex == null || hex.isEmpty) return null;
+  var h = hex.replaceAll('#', '').trim();
+  if (h.length == 6) h = 'FF$h';
+  final v = int.tryParse(h, radix: 16);
+  return v == null ? null : Color(v);
+}
+
+List<Map<String, dynamic>> _parseButtons(dynamic raw) {
+  if (raw is! String || raw.isEmpty) return const [];
+  try {
+    final d = jsonDecode(raw);
+    if (d is List) {
+      return d.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
+    }
+  } catch (_) {}
+  return const [];
+}
+
+/// Build platform notification details from a push `data` map. Downloads the
+/// image/large-icon and attaches action buttons when present.
+Future<NotificationDetails> _buildDetails(Map<String, dynamic> data) async {
+  final buttons = _parseButtons(data['buttons']);
+  final androidActions = buttons
+      .map((b) => AndroidNotificationAction(
+            b['id']?.toString() ?? '',
+            b['text']?.toString() ?? '',
+          ))
+      .toList();
+
+  final imageBytes = await _download(data['image']?.toString());
+  final largeIconBytes = await _download(data['large_icon']?.toString());
+  final largeIcon =
+      largeIconBytes != null ? ByteArrayAndroidBitmap(largeIconBytes) : null;
+
+  StyleInformation? style;
+  if (imageBytes != null) {
+    style = BigPictureStyleInformation(
+      ByteArrayAndroidBitmap(imageBytes),
+      largeIcon: largeIcon,
+    );
+  }
+
+  final android = AndroidNotificationDetails(
+    _kChannelId,
+    _kChannelName,
+    importance: Importance.high,
+    priority: Priority.high,
+    color: _parseColor(data['accent_color']?.toString()),
+    largeIcon: largeIcon,
+    styleInformation: style,
+    actions: androidActions.isNotEmpty ? androidActions : null,
+    sound: (data['android_sound'] is String &&
+            (data['android_sound'] as String).isNotEmpty)
+        ? RawResourceAndroidNotificationSound(data['android_sound'] as String)
+        : null,
+  );
+
+  final iosAttachments = <DarwinNotificationAttachment>[];
+  if (imageBytes != null) {
+    try {
+      final f = File(
+          '${Directory.systemTemp.path}/mp_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await f.writeAsBytes(imageBytes);
+      iosAttachments.add(DarwinNotificationAttachment(f.path));
+    } catch (_) {}
+  }
+  final ios = DarwinNotificationDetails(
+    subtitle: data['subtitle']?.toString(),
+    attachments: iosAttachments.isNotEmpty ? iosAttachments : null,
+    categoryIdentifier:
+        buttons.isNotEmpty ? 'mp_${data['notification_id']}' : null,
+  );
+
+  return NotificationDetails(android: android, iOS: ios);
+}
+
+/// Background FCM handler (separate isolate). Renders **data-only** messages
+/// (e.g. those carrying action buttons); messages with a `notification` block
+/// are already shown by the system tray, so we skip them to avoid duplicates.
+@pragma('vm:entry-point')
+Future<void> _mpFirebaseBackgroundHandler(RemoteMessage message) async {
+  if (message.notification != null) return; // system tray already showed it
+  final data = Map<String, dynamic>.from(message.data);
+  if (data['title'] == null) return;
+
+  final plugin = FlutterLocalNotificationsPlugin();
+  await plugin.initialize(
+    settings: const InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      iOS: DarwinInitializationSettings(),
+    ),
+  );
+  final details = await _buildDetails(data);
+  await plugin.show(
+    id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    title: data['title']?.toString(),
+    body: data['body']?.toString(),
+    notificationDetails: details,
+    payload: jsonEncode(data),
+  );
+}
+
+/// Background tap/action handler (separate isolate). The click is re-processed
+/// via the launch details when the app opens, so this is a best-effort no-op.
+@pragma('vm:entry-point')
+void _mpBackgroundResponse(NotificationResponse response) {}

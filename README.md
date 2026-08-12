@@ -53,9 +53,10 @@ Future<void> main() async {
   );
   await MyPush.instance.requestPermission();
 
-  // On click → you navigate
+  // On click → you navigate.
   MyPush.instance.onNotificationClick((data) {
     // data e.g. { screen: 'order', order_id: 'A-100', notification_id: '...' }
+    // If an action button was tapped, data['action_id'] holds its id.
   });
 
   runApp(const MyApp());
@@ -93,12 +94,51 @@ await MyPush.instance.deleteTag('city');
 MyPush.instance.setForegroundWillDisplay((data) => true);
 ```
 
+## Rich media & action buttons
+
+Compose a push in the dashboard with an image (big picture), large icon, accent
+color, subtitle (iOS), sound, and **action buttons**. The SDK renders all of it:
+
+- **Foreground**: the SDK builds a rich local notification (big-picture image,
+  large icon, accent color, iOS subtitle/attachment, buttons).
+- **Background/terminated**: notifications *without* buttons are rendered by the
+  system tray automatically. Notifications *with* buttons are sent as data-only
+  messages and rendered by the SDK's background handler (already wired — no app
+  code needed on Android).
+
+When a button is tapped, `onNotificationClick` receives the normal `data` plus
+`data['action_id']`.
+
+### iOS action buttons (required setup)
+
+iOS requires notification **categories** to be registered at init. Pass the
+categories your buttons use via `iosCategories`:
+
+```dart
+await MyPush.instance.initialize(
+  appKey: 'pub_xxxxxxxx',
+  apiBaseUrl: 'https://your-dashboard.vercel.app',
+  iosCategories: [
+    DarwinNotificationCategory(
+      'mp_default',
+      actions: [
+        DarwinNotificationAction.plain('accept', 'Accept'),
+        DarwinNotificationAction.plain('decline', 'Decline'),
+      ],
+    ),
+  ],
+);
+```
+
+For **iOS background/terminated** action buttons to appear, add a
+**Notification Service Extension** to your iOS app (Xcode → File → New → Target →
+Notification Service Extension) and set the category. Android needs none of this.
+Full snippet: see `IOS_NSE.md` (or the dashboard docs).
+
 ## Behaviour
 
 - **Device id**: a locally generated UUID (`shared_preferences`) — your `subscription id`.
 - **Registration**: on init the FCM token is sent to the backend; auto re-registers on `onTokenRefresh`.
-- **Foreground**: shows a heads-up banner via `flutter_local_notifications` (default).
-- **Click**: background (`onMessageOpenedApp`), terminated (`getInitialMessage`), and foreground-local-tap all funnel into `onNotificationClick`; click analytics are reported automatically.
-
-## Notes
-- To process data-only background messages you'll need a separate top-level `FirebaseMessaging.onBackgroundMessage` handler (v1 uses notification messages, so it isn't required).
+- **Foreground**: builds a rich heads-up notification via `flutter_local_notifications` (image, large icon, color, subtitle, buttons).
+- **Background**: a top-level `FirebaseMessaging.onBackgroundMessage` handler renders data-only (button-carrying) messages; plain notifications use the system tray.
+- **Click**: background (`onMessageOpenedApp`), terminated (`getInitialMessage`), foreground-local-tap, and app-launch-from-local-notification all funnel into `onNotificationClick`; click analytics are reported automatically.

@@ -1,6 +1,6 @@
 name: my_push
 description: Self-hosted push notification SDK (OneSignal alternative) using FCM.
-version: 0.2.0
+version: 0.3.0
 publish_to: none
 
 environment:
