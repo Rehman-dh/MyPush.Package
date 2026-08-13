@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+- `apiBaseUrl` is now optional in `initialize()` — set `kDefaultApiBaseUrl` once in
+  the package and apps pass only the App Key (OneSignal-style App-ID-only init).
+
 ## 0.3.0
 - Rich foreground notifications: big-picture image, large icon, accent color,
   iOS subtitle + image attachment, custom sound.

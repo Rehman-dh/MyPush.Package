@@ -20,6 +20,15 @@ Then:
 flutter pub get
 ```
 
+**One-time:** set your dashboard URL in `lib/my_push.dart`:
+
+```dart
+const String kDefaultApiBaseUrl = 'https://my-push-backend.vercel.app';
+```
+
+After this, apps only pass the **App Key** to `initialize()` — just like OneSignal
+only needs an App ID. (You can still override per-call with `apiBaseUrl:`.)
+
 ## Setup — zero config in the app (like OneSignal)
 
 You do **not** need `flutterfire configure`, `firebase_options.dart`, or to bundle
@@ -46,10 +55,9 @@ import 'package:my_push/my_push.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // SDK fetches Firebase config from the backend and initializes Firebase itself.
+  // Base URL is baked into the SDK (kDefaultApiBaseUrl) — apps pass only the App Key.
   await MyPush.instance.initialize(
-    appKey: 'pub_xxxxxxxx',                       // App Key from the dashboard
-    apiBaseUrl: 'https://your-dashboard.vercel.app',
+    appKey: 'pub_xxxxxxxx',                        // App Key from the dashboard
   );
   await MyPush.instance.requestPermission();
 
@@ -70,7 +78,7 @@ services with `flutterfire configure`), skip the SDK's auto-init:
 ```dart
 await MyPush.instance.initialize(
   appKey: 'pub_xxxxxxxx',
-  apiBaseUrl: 'https://your-dashboard.vercel.app',
+  apiBaseUrl: 'https://my-push-backend.vercel.app',
   autoInitializeFirebase: false,
 );
 ```
@@ -117,7 +125,7 @@ categories your buttons use via `iosCategories`:
 ```dart
 await MyPush.instance.initialize(
   appKey: 'pub_xxxxxxxx',
-  apiBaseUrl: 'https://your-dashboard.vercel.app',
+  apiBaseUrl: 'https://my-push-backend.vercel.app',
   iosCategories: [
     DarwinNotificationCategory(
       'mp_default',

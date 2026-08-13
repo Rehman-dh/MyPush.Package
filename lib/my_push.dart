@@ -22,10 +22,16 @@ typedef ForegroundWillDisplay = bool Function(Map<String, dynamic> data);
 const String _kChannelId = 'my_push_default';
 const String _kChannelName = 'Notifications';
 
+/// Your self-hosted dashboard's base URL, baked into the SDK so host apps only
+/// need to pass the App Key (like OneSignal only needs an App ID). Set this once
+/// to your deployment; apps can still override it per-call via `apiBaseUrl`.
+const String kDefaultApiBaseUrl = 'https://my-push-backend.vercel.app';
+
 /// Self-hosted push SDK — a simple OneSignal-like facade.
 ///
 /// ```dart
-/// await MyPush.instance.initialize(appKey: 'pub_...', apiBaseUrl: 'https://...');
+/// // Base URL is baked in (kDefaultApiBaseUrl) — apps pass only the App Key:
+/// await MyPush.instance.initialize(appKey: 'pub_...');
 /// await MyPush.instance.requestPermission();
 /// MyPush.instance.onNotificationClick((data) {
 ///   // data['action_id'] is set when an action button was tapped.
@@ -56,12 +62,19 @@ class MyPush {
   /// the README for the recommended setup and the Notification Service Extension.
   Future<void> initialize({
     required String appKey,
-    required String apiBaseUrl,
+    String? apiBaseUrl,
     bool autoInitializeFirebase = true,
     List<DarwinNotificationCategory>? iosCategories,
   }) async {
     if (_initialized) return;
-    _api = ApiClient(baseUrl: apiBaseUrl, appKey: appKey);
+    final base = (apiBaseUrl ?? kDefaultApiBaseUrl).trim();
+    if (base.isEmpty || base.contains('YOUR-DASHBOARD')) {
+      throw ArgumentError(
+        'my_push: set kDefaultApiBaseUrl in my_push.dart to your dashboard URL, '
+        'or pass apiBaseUrl to initialize().',
+      );
+    }
+    _api = ApiClient(baseUrl: base, appKey: appKey);
 
     if (autoInitializeFirebase && Firebase.apps.isEmpty) {
       await _initFirebaseFromBackend();
