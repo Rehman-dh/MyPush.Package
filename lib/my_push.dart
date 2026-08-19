@@ -114,10 +114,20 @@ class MyPush {
   }
 
   /// Request notification permission (iOS + Android 13+).
+  ///
+  /// On iOS the FCM token is only issued after the user authorizes
+  /// notifications (APNs), so registration during [initialize] may have been
+  /// skipped (null token). Once permission is granted we (re-)register the
+  /// device — the backend upserts, so this is idempotent.
   Future<bool> requestPermission() async {
     final settings = await FirebaseMessaging.instance.requestPermission();
-    return settings.authorizationStatus == AuthorizationStatus.authorized ||
-        settings.authorizationStatus == AuthorizationStatus.provisional;
+    final granted =
+        settings.authorizationStatus == AuthorizationStatus.authorized ||
+            settings.authorizationStatus == AuthorizationStatus.provisional;
+    if (granted) {
+      await _registerDevice();
+    }
+    return granted;
   }
 
   /// Link the user identity (external_user_id).
