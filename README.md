@@ -23,7 +23,7 @@ flutter pub get
 **One-time:** set your dashboard URL in `lib/my_push.dart`:
 
 ```dart
-const String kDefaultApiBaseUrl = 'https://my-push-backend.vercel.app';
+const String kDefaultApiBaseUrl = 'https://pushnotify.mycdnpro.com';
 ```
 
 After this, apps only pass the **App Key** to `initialize()` — just like OneSignal
@@ -78,7 +78,7 @@ services with `flutterfire configure`), skip the SDK's auto-init:
 ```dart
 await MyPush.instance.initialize(
   appKey: 'pub_xxxxxxxx',
-  apiBaseUrl: 'https://my-push-backend.vercel.app',
+  apiBaseUrl: 'https://pushnotify.mycdnpro.com',
   autoInitializeFirebase: false,
 );
 ```
@@ -125,7 +125,7 @@ categories your buttons use via `iosCategories`:
 ```dart
 await MyPush.instance.initialize(
   appKey: 'pub_xxxxxxxx',
-  apiBaseUrl: 'https://my-push-backend.vercel.app',
+  apiBaseUrl: 'https://pushnotify.mycdnpro.com',
   iosCategories: [
     DarwinNotificationCategory(
       'mp_default',

@@ -25,7 +25,7 @@ const String _kChannelName = 'Notifications';
 /// Your self-hosted dashboard's base URL, baked into the SDK so host apps only
 /// need to pass the App Key (like OneSignal only needs an App ID). Set this once
 /// to your deployment; apps can still override it per-call via `apiBaseUrl`.
-const String kDefaultApiBaseUrl = 'https://my-push-backend.vercel.app';
+const String kDefaultApiBaseUrl = 'https://pushnotify.mycdnpro.com';
 
 /// Self-hosted push SDK — a simple OneSignal-like facade.
 ///
