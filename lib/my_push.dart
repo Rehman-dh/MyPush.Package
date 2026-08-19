@@ -171,7 +171,13 @@ class MyPush {
     List<DarwinNotificationCategory>? iosCategories,
   ) async {
     final android = const AndroidInitializationSettings('@mipmap/ic_launcher');
+    // Do NOT request iOS permissions here — otherwise the OS permission dialog
+    // pops during initialize(). Permission is requested only when the host app
+    // calls requestPermission(), so it controls the timing.
     final ios = DarwinInitializationSettings(
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
       notificationCategories: iosCategories ?? const [],
     );
     await _local.initialize(
