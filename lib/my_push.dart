@@ -82,6 +82,14 @@ class MyPush {
 
     _deviceId = await _loadOrCreateDeviceId();
     await _setupLocalNotifications(iosCategories);
+    // iOS: allow notifications to appear while the app is in the foreground.
+    // Without this the OS delegate suppresses foreground notifications, so they
+    // only showed once the app was backgrounded. No-op on Android.
+    await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
     await _registerDevice();
     _wireListeners();
     await _handleLaunchFromLocalNotification();
@@ -264,6 +272,15 @@ class MyPush {
     final data = _dataFromRemote(m);
     final show = _foregroundGate?.call(data) ?? true;
     if (!show) return;
+
+    // On iOS, a message carrying a notification block is presented by the OS in
+    // the foreground (we enabled foreground presentation) and enriched by the
+    // Notification Service Extension — building our own local notification too
+    // would show a duplicate. Let the OS present it. We still build locally on
+    // Android, and on iOS for data-only (button) messages the OS won't show.
+    if (defaultTargetPlatform == TargetPlatform.iOS && m.notification != null) {
+      return;
+    }
 
     final details = await _buildDetails(data);
     await _local.show(

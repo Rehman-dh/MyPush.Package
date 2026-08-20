@@ -11,11 +11,11 @@ dependencies:
   my_push:
     git:
       url: https://github.com/Rehman-dh/MyPush.Package.git
-      ref: "0.3.2"   # pin a released tag — don't track main
+      ref: "0.3.3"   # pin a released tag — don't track main
 ```
 
 Pin `ref` to a **released version tag** (not `main`) so future changes never
-disturb your app. Upgrade deliberately by bumping the tag. Latest: **0.3.2**.
+disturb your app. Upgrade deliberately by bumping the tag. Latest: **0.3.3**.
 
 Then:
 
